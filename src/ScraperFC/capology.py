@@ -1,16 +1,25 @@
-from selenium import webdriver
+import google_colab_selenium as gs
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.common.by import By
-from selenium.common.exceptions import StaleElementReferenceException
+from random import choice
+import logging
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
-from ScraperFC.scraperfc_exceptions import InvalidCurrencyException, InvalidLeagueException, \
-    InvalidYearException
+from ScraperFC.scraperfc_exceptions import InvalidCurrencyException, InvalidLeagueException, InvalidYearException
 from io import StringIO
 from typing import Sequence
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.by import By
+from selenium.common.exceptions import StaleElementReferenceException, TimeoutException
+
+user_agents = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3',
+    'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/56.0.2924.87 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 6.1; WOW64; Trident/7.0; AS; rv:11.0) like Gecko',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.1 Safari/605.1.15',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.96 Safari/537.36'
+]
 
 comps = {
     "Bundesliga":  {'url': 'de/1-bundesliga'},
@@ -30,45 +39,41 @@ comps = {
     "Belgian 1st Division":  {'url': 'be/first-division-a'},
 }
 
+def setup_selenium():
+    options = Options()
+    options.add_argument('--headless')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
+    options.add_argument("--window-size=1920,1080")
+    options.add_argument("--disable-infobars")
+    options.add_argument("--disable-popup-blocking")
+    options.add_argument("--ignore-certificate-errors")
+    options.add_argument("--incognito")
+    options.add_argument(f'--user-agent={choice(user_agents)}')
+    driver = gs.Chrome(options=options)
+    return driver
 
 class Capology():
 
     # ==============================================================================================
     def __init__(self) -> None:
         self.valid_currencies = ['eur', 'gbp', 'usd']
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
     # ==============================================================================================
     def _webdriver_init(self) -> None:
-        """ Initializes a new webdriver
-        """
-        options = Options()
-        options.add_argument('--headless')
-        options.add_argument('--incognito')
-        prefs = {'profile.managed_default_content_settings.images': 2}  # don't load images
-        options.add_experimental_option('prefs', prefs)
-        self.driver = webdriver.Chrome(options=options)
+        """Initializes a new webdriver"""
+        self.driver = setup_selenium()
 
     # ==============================================================================================
     def _webdriver_close(self) -> None:
-        """ Closes and quits the Selenium WebDriver instance.
-        """
+        """Closes and quits the Selenium WebDriver instance."""
         self.driver.close()
         self.driver.quit()
 
     # ==============================================================================================
     def get_league_url(self, league: str) -> str:
-        """ Returns the URL for the requested league
-
-        Parameters
-        ----------
-        league : str
-            League to be scraped (e.g., "EPL"). See the comps variable in ScraperFC.Capology for
-            valid leagues for this module.
-        Returns
-        -------
-        : str
-            League URL
-        """
+        """Returns the URL for the requested league"""
         if not isinstance(league, str):
             raise TypeError('`league` must be a string.')
         if league not in comps.keys():
@@ -78,78 +83,36 @@ class Capology():
 
     # ==============================================================================================
     def get_valid_seasons(self, league: str) -> Sequence[str]:
-        """ Returns valid season strings for the chosen league
-
-        Parameters
-        ----------
-        league : str
-            League to be scraped (e.g., "EPL"). See the comps variable in ScraperFC.Capology for
-            valid leagues for this module.
-        Returns
-        -------
-        : list of str
-            List of valid year strings for this league
-        """
+        """Returns valid season strings for the chosen league"""
         if not isinstance(league, str):
             raise TypeError('`league` must be a string.')
         if league not in comps.keys():
             raise InvalidLeagueException(league, 'Capology', list(comps.keys()))
 
         soup = BeautifulSoup(requests.get(self.get_league_url(league)).content, 'html.parser')
-        year_dropdown_tags = soup.find('select', {'id': 'nav-submenu2'})\
-            .find_all('option', value=True)  # type: ignore
+        year_dropdown_tags = soup.find('select', {'id': 'nav-submenu2'}).find_all('option', value=True)
         seasons = [x.text for x in year_dropdown_tags]
 
         return seasons
 
     # ==============================================================================================
     def get_season_url(self, year: str, league: str) -> str:
-        """ Gets URL to chosen year of league
-
-        Parameters
-        ----------
-        year : str
-            See the :ref:`capology_year` `year` parameter docs for details.
-        league : str
-            League to be scraped (e.g., "EPL"). See the comps variable in ScraperFC.Capology for
-            valid leagues for this module.
-        Returns
-        -------
-        : str
-            Season URL
-        """
+        """Gets URL to chosen year of league"""
         if not isinstance(year, str):
             raise TypeError('`year` must be a string.')
         valid_seasons = self.get_valid_seasons(league)
         if year not in valid_seasons:
             raise InvalidYearException(year, league, valid_seasons)
-        
+
         soup = BeautifulSoup(requests.get(self.get_league_url(league)).content, 'html.parser')
-        year_dropdown_tags = soup.find('select', {'id': 'nav-submenu2'})\
-            .find_all('option', value=True)  # type: ignore
+        year_dropdown_tags = soup.find('select', {'id': 'nav-submenu2'}).find_all('option', value=True)
         value = [x['value'] for x in year_dropdown_tags if x.text == year][0]
 
         return f'https://capology.com{value}'
 
     # ==============================================================================================
     def scrape_salaries(self, year: str, league: str, currency: str) -> pd.DataFrame:
-        """ Scrapes player salaries for the given league season.
-
-        Parameters
-        ----------
-        year : str
-            See the :ref:`capology_year` `year` parameter docs for details.
-        league : str
-            League to be scraped (e.g., "EPL"). See the comps variable in ScraperFC.Capology for
-            valid leagues for this module.
-        currency : str
-            The currency for the returned salaries. Options are "eur" for Euro, "gbp" for British
-            Pound, and "USD" for US Dollar
-        Returns
-        -------
-        : DataFrame
-            The salaries of all players in the given league season
-        """
+        """Scrapes player salaries for the given league season."""
         if not isinstance(currency, str):
             raise TypeError('`currency` must be a string.')
         if currency not in self.valid_currencies:
@@ -159,48 +122,52 @@ class Capology():
         try:
             self.driver.get(self.get_season_url(year, league))
 
-            # Show all players on one page ---------------------------------------------------------
+            # Show all players on one page
             done = False
             while not done:
                 try:
-                    all_btn = WebDriverWait(self.driver, 10)\
-                        .until(EC.element_to_be_clickable((By.LINK_TEXT, 'All')))
+                    all_btn = WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.LINK_TEXT, 'All')))
                     self.driver.execute_script('arguments[0].click()', all_btn)
                     done = True
                 except StaleElementReferenceException:
                     pass
+                except TimeoutException:
+                    logging.error("Timeout while waiting for the 'All' button to become clickable.")
+                    return pd.DataFrame()
 
-            # Select the currency ------------------------------------------------------------------
-            currency_btn = WebDriverWait(self.driver, 10)\
-                .until(EC.element_to_be_clickable((By.ID, f'btn_{currency}')))
-            self.driver.execute_script('arguments[0].click()', currency_btn)
-            print('Changed currency')
+            # Select the currency
+            try:
+                currency_btn = WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, f'btn_{currency}')))
+                self.driver.execute_script('arguments[0].click()', currency_btn)
+                logging.info('Changed currency')
+            except TimeoutException:
+                logging.error("Timeout while waiting for the currency button to become clickable.")
+                return pd.DataFrame()
 
-            # Table to pandas df -------------------------------------------------------------------
-            tbody_html = self.driver.find_element(By.ID, 'table')\
-                .find_element(By.TAG_NAME, 'tbody').get_attribute('outerHTML')
-            table_html = '<table>' + tbody_html + '</table>'  # type: ignore
+            # Table to pandas df
+            tbody_html = self.driver.find_element(By.ID, 'table').find_element(By.TAG_NAME, 'tbody').get_attribute('outerHTML')
+            table_html = '<table>' + tbody_html + '</table>'
             df = pd.read_html(StringIO(table_html))[0]
+
+            # Process DataFrame
             if df.shape[1] == 13:
-                # drop check-mark column
                 df = df.drop(columns=[1])
                 df.columns = [
                     'Player', 'Weekly Gross', 'Annual Gross', 'Expiration', 'Length', 'Total Gross',
                     'Status', 'Pos. group', 'Pos.', 'Age', 'Country', 'Club'
-                ]  # type: ignore
+                ]
             elif df.shape[1] == 17:
-                # drop check-mark column and True/False column (not sure what this one is)
                 df = df.drop(columns=[1, 16])
                 df.columns = [
                     'Player', 'Weekly Gross', 'Annual Gross', 'Annual Bonus', 'Signed',
-                    'Expiration', 'Years Reamining', 'Gross Remaining', 'Release Clause', 'Status',
+                    'Expiration', 'Years Remaining', 'Gross Remaining', 'Release Clause', 'Status',
                     'Pos. group', 'Pos.', 'Age', 'Country', 'Club'
-                ]  # type: ignore
+                ]
             else:
                 df.columns = [
                     'Player', 'Weekly Gross', 'Annual Gross', 'Adj. Gross', 'Pos. group', 'Age',
                     'Country', 'Club'
-                ]  # type: ignore
+                ]
 
             return df
         finally:
@@ -208,11 +175,11 @@ class Capology():
 
     # ==============================================================================================
     def scrape_payrolls(self, year: str, league: str, currency: str) -> pd.DataFrame:
-        """ Deprecated. Use scrape_salaries() instead.
-        """
+        """Deprecated. Use scrape_salaries() instead."""
         raise NotImplementedError(
             '`scrape_payrolls()` has been deprecated. Please use `scrape_salaries()` instead.'
         )
+
         # """ Scrapes team payrolls for the given league season.
 
         # Parameters
